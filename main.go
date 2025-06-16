@@ -55,7 +55,7 @@ func bfs(urlStr string, maxDepth int) []string {
 	seen := make(map[string]empty)
 	var q map[string]empty
 	nq := map[string]empty{
-		urlStr: empty{},
+		urlStr: {},
 	}
 	for range maxDepth+1 {
 		q, nq = nq, make(map[string]empty)
