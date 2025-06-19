@@ -25,7 +25,7 @@ type urlset struct {
 
 func main() {
 	urlFlag := flag.String("url", "https://gophercises.com", "the url that you want to crawl on")
-	maxDepth := flag.Int("depth", 3, "the maximum number of links deep to traverse")
+	maxDepth := flag.Int("depth", 2, "the maximum number of links deep to traverse")
 	flag.Parse()
 
 	parsedUrl, err := url.Parse(*urlFlag)
@@ -44,7 +44,7 @@ func main() {
 	domain := strings.ReplaceAll(parsedUrl.Hostname(), ".", "-")
 	filename := fmt.Sprintf("output/url-%s.xml", domain)
 
-	links := sitemap.GetLinks(*urlFlag, *maxDepth)
+	links := sitemap.GetLinks(*urlFlag, *maxDepth, 1000)
 
 	toXml := urlset{
 		Xmlns: xmlns,

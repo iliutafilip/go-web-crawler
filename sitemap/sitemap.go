@@ -25,113 +25,95 @@ type urlset struct {
 }
 
 type Job struct {
-	URL      string
-	MaxDepth int
+	URL   string
+	Depth int
 }
 
-func workers(id int, jobs <-chan Job, results chan<- []Job, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for job := range jobs {
-		links := get(job.URL)
-		if links != nil {
-			newJobs := make([]Job, 0, len(links))
-			for _, link := range links {
-				if job.MaxDepth > 0 {
-					newJobs = append(newJobs, Job{URL: link, MaxDepth: job.MaxDepth - 1})
-				} else {
-					newJobs = append(newJobs, Job{URL: link, MaxDepth: 0})
-				}
-			}
-			results <- newJobs
-		} else {
-			log.Printf("worker %d: no links found for %s", id, job.URL)
-			results <- nil
-		}
-	}
-}
-
-func GetLinks(url string, maxDepth int) []string {
-
+func GetLinks(startURL string, maxDepth int, maxJobCount int) []string {
 	const numWorkers = 10
 
-	seen := make(map[string]struct{})
-	jobs := make(chan Job, 100)
-	results := make(chan []Job, 100)
+	var (
+		seen     = map[string]struct{}{startURL: {}}
+		seenMu   sync.Mutex
+		jobCount = 1 
+		countMu  sync.Mutex
 
-	var seenMu sync.Mutex
-	var wg sync.WaitGroup
+		jobs    = make(chan Job, maxJobCount)
+		results = make(chan []Job, maxJobCount)
+
+		workerWg sync.WaitGroup
+		resultWg sync.WaitGroup
+	)
 
 	for i := range numWorkers {
-		wg.Add(1)
-		go workers(i, jobs, results, &wg)
+		workerWg.Add(1)
+		go func(id int) {
+			defer workerWg.Done()
+			for job := range jobs {
+				log.Printf("Worker %d processing job for URL: %s", id, job.URL)
+				links := get(job.URL)
+
+				var newJobs []Job
+				for _, link := range links {
+					newJobs = append(newJobs, Job{URL: link, Depth: job.Depth + 1})
+				}
+				results <- newJobs
+				log.Printf("Worker %d finished job for URL: %s", id, job.URL)
+			}
+		}(i)
 	}
 
-	seen[url] = struct{}{}
-	pendingJobs := 1
-	jobs <- Job{URL: url, MaxDepth: maxDepth}
+	resultWg.Add(1)
+	jobs <- Job{URL: startURL, Depth: 0}
 
-	for pendingJobs > 0 {
-		newJobs := <-results
-		pendingJobs--
+	go func() {
+		for newJobs := range results {
+			for _, job := range newJobs {
+				if job.Depth > maxDepth {
+					continue
+				}
 
-		for _, job := range newJobs {
-			seenMu.Lock()
-			if _, ok := seen[job.URL]; !ok {
+				seenMu.Lock()
+				if _, ok := seen[job.URL]; ok {
+					seenMu.Unlock()
+					continue
+				}
 				seen[job.URL] = struct{}{}
-				pendingJobs++
+				seenMu.Unlock()
+
+				countMu.Lock()
+				if jobCount >= maxJobCount {
+					countMu.Unlock()
+					continue
+				}
+				jobCount++
+				countMu.Unlock()
+
+				resultWg.Add(1)
 				jobs <- job
 			}
-			seenMu.Unlock()
+			resultWg.Done()
 		}
-	}
+	}()
 
-	close(jobs)
-	wg.Wait()
+	go func() {
+		resultWg.Wait()
+		close(jobs)
+	}()
+
+	workerWg.Wait()
 	close(results)
 
-	ret := make([]string, 0, len(seen))
+	final := make([]string, 0, len(seen))
 	for link := range seen {
-		ret = append(ret, link)
+		final = append(final, link)
 	}
-	return ret
-	// return bfs(url, maxDepth)
-}
-
-type empty struct{}
-
-func bfs(urlStr string, maxDepth int) []string {
-
-	seen := make(map[string]empty)
-	var q map[string]empty
-	nq := map[string]empty{
-		urlStr: {},
-	}
-	for range maxDepth + 1 {
-		q, nq = nq, make(map[string]empty)
-		if len(q) == 0 {
-			break
-		}
-		for link := range q {
-			if _, ok := seen[link]; ok {
-				continue
-			}
-			seen[link] = empty{}
-			for _, otherLink := range get(link) {
-				if _, ok := seen[otherLink]; !ok {
-					nq[otherLink] = empty{}
-				}
-			}
-		}
-	}
-	ret := make([]string, 0, len(seen))
-	for link := range seen {
-		ret = append(ret, link)
-	}
-	return ret
+	return final
 }
 
 var client = &http.Client{
 	Timeout: 5 * time.Second,
+
 }
 
 func get(urlStr string) []string {
@@ -185,10 +167,10 @@ func hrefs(body io.Reader, base string) []string {
 			if err != nil {
 				continue
 			}
-			// strip fragments and queries
-			// u.Fragment = ""
-			// optionally strip query parameters:
-			// u.RawQuery = ""
+			//strip fragments and queries
+			u.Fragment = ""
+			//optionally strip query parameters:
+			u.RawQuery = ""
 			ret = append(ret, u.String())
 		default:
 			// skip things like javascript:...
