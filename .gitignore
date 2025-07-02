@@ -36,3 +36,4 @@ output/
 output.txt
 success.txt
 error.txt
+.DS_Store

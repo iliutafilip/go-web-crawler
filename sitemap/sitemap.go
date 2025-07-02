@@ -29,6 +29,7 @@ type Job struct {
 	Depth int
 }
 
+
 func GetLinks(startURL string, maxDepth int, maxJobCount int) []string {
 	const numWorkers = 10
 
@@ -42,7 +43,7 @@ func GetLinks(startURL string, maxDepth int, maxJobCount int) []string {
 		results = make(chan []Job, maxJobCount)
 
 		workerWg sync.WaitGroup
-		resultWg sync.WaitGroup
+		jobsWg sync.WaitGroup
 	)
 
 	for i := range numWorkers {
@@ -50,7 +51,6 @@ func GetLinks(startURL string, maxDepth int, maxJobCount int) []string {
 		go func(id int) {
 			defer workerWg.Done()
 			for job := range jobs {
-				log.Printf("Worker %d processing job for URL: %s", id, job.URL)
 				links := get(job.URL)
 
 				var newJobs []Job
@@ -58,12 +58,11 @@ func GetLinks(startURL string, maxDepth int, maxJobCount int) []string {
 					newJobs = append(newJobs, Job{URL: link, Depth: job.Depth + 1})
 				}
 				results <- newJobs
-				log.Printf("Worker %d finished job for URL: %s", id, job.URL)
 			}
 		}(i)
 	}
 
-	resultWg.Add(1)
+	jobsWg.Add(1)
 	jobs <- Job{URL: startURL, Depth: 0}
 
 	go func() {
@@ -89,15 +88,15 @@ func GetLinks(startURL string, maxDepth int, maxJobCount int) []string {
 				jobCount++
 				countMu.Unlock()
 
-				resultWg.Add(1)
+				jobsWg.Add(1)
 				jobs <- job
 			}
-			resultWg.Done()
+			jobsWg.Done()
 		}
 	}()
 
 	go func() {
-		resultWg.Wait()
+		jobsWg.Wait()
 		close(jobs)
 	}()
 
@@ -136,7 +135,7 @@ func get(urlStr string) []string {
 
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "text/html") {
-		log.Printf("skipping non-HTML content at %s (Content-Type: %s)", urlStr, contentType)
+		// log.Printf("skipping non-HTML content at %s (Content-Type: %s)", urlStr, contentType)
 		return nil
 	}
 
